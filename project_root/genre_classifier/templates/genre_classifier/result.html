@@ -1,0 +1,12 @@
+<!-- genre_classifier/templates/genre_classifier/result.html -->
+<!DOCTYPE html>
+<html>
+<head>
+ <title>Prediction Result</title>
+</head>
+<body>
+ <h1>Predicted Genre:</h1>
+ <p>{{ genre }}</p>
+ <a href="{% url 'index' %}">Upload another file</a>
+</body>
+</html>

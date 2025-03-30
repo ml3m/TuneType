@@ -1,0 +1,15 @@
+<!-- genre_classifier/templates/genre_classifier/index.html -->
+<!DOCTYPE html>
+<html>
+<head>
+ <title>Upload Audio</title>
+</head>
+<body>
+ <h1>Upload Audio File</h1>
+ <form method="post" enctype="multipart/form-data">
+ {% csrf_token %}
+ {{ form.as_p }}
+ <button type="submit">Upload</button>
+ </form>
+</body>
+</html>

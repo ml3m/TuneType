@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Visualization - Music Genre Classifier</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        .visualize-container {
+            background-color: var(--card-bg);
+            border-radius: var(--border-radius);
+            box-shadow: var(--shadow);
+            padding: 2rem;
+            max-width: 900px;
+            margin: 0 auto;
+        }
+        
+        .audio-player {
+            width: 100%;
+            margin: 1.5rem 0;
+        }
+        
+        .visualization-section {
+            margin-top: 2rem;
+        }
+        
+        .visualization-section h2 {
+            color: var(--primary-color);
+            margin-bottom: 1rem;
+            border-bottom: 1px solid #eee;
+            padding-bottom: 0.5rem;
+        }
+        
+        .visualization-controls {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 1rem;
+            flex-wrap: wrap;
+            gap: 1rem;
+        }
+        
+        .control-group {
+            display: flex;
+            gap: 0.5rem;
+        }
+        
+        .control-button {
+            background-color: transparent;
+            color: var(--primary-color);
+            border: 1px solid var(--primary-color);
+            padding: 0.5rem 1rem;
+            border-radius: 50px;
+            cursor: pointer;
+            transition: var(--transition);
+        }
+        
+        .control-button:hover, .control-button.active {
+            background-color: var(--primary-color);
+            color: white;
+        }
+        
+        .visualization-container {
+            min-height: 300px;
+            border: 1px solid #eee;
+            border-radius: var(--border-radius);
+            overflow: hidden;
+            background-color: #f8f9fa;
+            position: relative;
+        }
+        
+        .visualization-placeholder {
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            height: 300px;
+            text-align: center;
+            color: var(--text-light);
+        }
+        
+        .home-button {
+            display: inline-block;
+            background-color: var(--primary-color);
+            color: white;
+            padding: 0.8rem 1.5rem;
+            border-radius: 50px;
+            text-decoration: none;
+            font-weight: 500;
+            transition: var(--transition);
+            margin-top: 1.5rem;
+        }
+        
+        .home-button:hover {
+            background-color: var(--primary-dark);
+        }
+        
+        .file-info {
+            background-color: #f0f8ff;
+            padding: 1rem;
+            border-radius: var(--border-radius);
+            margin-bottom: 1.5rem;
+        }
+        
+        .file-name {
+            font-weight: 500;
+            color: var(--primary-color);
+            margin-bottom: 0.5rem;
+        }
+        
+        #predictionResults {
+            margin-top: 1.5rem;
+        }
+        
+        .genre-result-compact {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 1rem;
+            margin-top: 1rem;
+        }
+        
+        .top-genre-badge {
+            background-color: var(--primary-color);
+            color: white;
+            padding: 0.5rem 1rem;
+            border-radius: 50px;
+            font-weight: 500;
+            display: inline-flex;
+            align-items: center;
+        }
+        
+        .top-genre-badge span {
+            margin-left: 0.5rem;
+            background-color: rgba(255, 255, 255, 0.3);
+            padding: 0.2rem 0.5rem;
+            border-radius: 50px;
+            font-size: 0.8rem;
+        }
+        
+        .genre-badge {
+            background-color: rgba(74, 107, 255, 0.1);
+            color: var(--primary-color);
+            padding: 0.5rem 1rem;
+            border-radius: 50px;
+            font-weight: 500;
+            display: inline-flex;
+            align-items: center;
+        }
+        
+        .genre-badge span {
+            margin-left: 0.5rem;
+            background-color: rgba(74, 107, 255, 0.2);
+            padding: 0.2rem 0.5rem;
+            border-radius: 50px;
+            font-size: 0.8rem;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Audio Visualization</h1>
+            <p class="subtitle">Analyze the audio features used for genre classification</p>
+        </header>
+        
+        <main>
+            <div class="visualize-container">
+                <div class="file-info">
+                    <div class="file-name">{{ filename }}</div>
+                    <audio controls class="audio-player" id="audioPlayer">
+                        <source src="{{ url_for('uploaded_file', filename=filename) }}" type="audio/mpeg">
+                        Your browser does not support the audio element.
+                    </audio>
+                </div>
+                
+                <div id="predictionResults">
+                    <h2>Genre Prediction</h2>
+                    <div id="genreResultsContainer" class="genre-result-compact">
+                        <div class="loading">Loading prediction results...</div>
+                    </div>
+                </div>
+                
+                <div class="visualization-section">
+                    <h2>Audio Analysis</h2>
+                    <div class="visualization-controls">
+                        <div class="control-group">
+                            <button class="control-button active" id="waveformBtn">Waveform</button>
+                            <button class="control-button" id="spectrogramBtn">Spectrogram</button>
+                            <button class="control-button" id="mfccBtn">MFCCs</button>
+                        </div>
+                        <div class="control-group">
+                            <button class="control-button" id="fullBtn">Full Track</button>
+                            <button class="control-button" id="segmentBtn">30s Segment</button>
+                        </div>
+                    </div>
+                    
+                    <div class="visualization-container" id="visualizationContainer">
+                        <div class="visualization-placeholder">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M9 18V5l12-2v13"></path>
+                                <circle cx="6" cy="18" r="3"></circle>
+                                <circle cx="18" cy="16" r="3"></circle>
+                            </svg>
+                            <p>Generating visualization...</p>
+                            <p>This may take a moment as we analyze your audio file</p>
+                        </div>
+                    </div>
+                </div>
+                
+                <a href="/" class="home-button">Return to Classifier</a>
+            </div>
+        </main>
+        
+        <footer>
+            <p>AI Music Genre Classification</p>
+        </footer>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            const waveformBtn = document.getElementById('waveformBtn');
+            const spectrogramBtn = document.getElementById('spectrogramBtn');
+            const mfccBtn = document.getElementById('mfccBtn');
+            const fullBtn = document.getElementById('fullBtn');
+            const segmentBtn = document.getElementById('segmentBtn');
+            const visualizationContainer = document.getElementById('visualizationContainer');
+            const genreResultsContainer = document.getElementById('genreResultsContainer');
+            const audioPlayer = document.getElementById('audioPlayer');
+            const filename = "{{ filename }}";
+            
+            // Make sure fullBtn is active by default
+            fullBtn.classList.add('active');
+            
+            // Active button toggle
+            const visualizationButtons = [waveformBtn, spectrogramBtn, mfccBtn, fullBtn, segmentBtn];
+            visualizationButtons.forEach(button => {
+                button.addEventListener('click', function() {
+                    // Toggle active state within the same group
+                    const isViewButton = [waveformBtn, spectrogramBtn, mfccBtn].includes(button);
+                    
+                    if (isViewButton) {
+                        [waveformBtn, spectrogramBtn, mfccBtn].forEach(btn => {
+                            btn.classList.remove('active');
+                        });
+                    } else {
+                        [fullBtn, segmentBtn].forEach(btn => {
+                            btn.classList.remove('active');
+                        });
+                    }
+                    
+                    button.classList.add('active');
+                    
+                    // Update visualization based on active buttons
+                    updateVisualization();
+                });
+            });
+            
+            // Fetch prediction results
+            async function getPredictionResults() {
+                try {
+                    // Create a FormData object
+                    const formData = new FormData();
+                    
+                    // Get the audio file from the player source
+                    const audioSrc = document.querySelector('#audioPlayer source').src;
+                    
+                    // Use fetch to get the file as a blob
+                    const response = await fetch(audioSrc);
+                    const blob = await response.blob();
+                    
+                    // Append the blob to the FormData
+                    formData.append('file', blob, filename);
+                    
+                    // Send to the prediction endpoint
+                    const predResponse = await fetch('/predict', {
+                        method: 'POST',
+                        body: formData
+                    });
+                    
+                    if (!predResponse.ok) {
+                        throw new Error('Prediction failed');
+                    }
+                    
+                    const data = await predResponse.json();
+                    
+                    // Update genre results
+                    if (genreResultsContainer) {
+                        genreResultsContainer.innerHTML = '';
+                        
+                        // Display top genre with badge
+                        const topGenreBadge = document.createElement('div');
+                        topGenreBadge.className = 'top-genre-badge';
+                        const topPercentage = Math.round(data.top_probability * 100);
+                        topGenreBadge.innerHTML = `${capitalizeFirstLetter(data.top_genre)} <span>${topPercentage}%</span>`;
+                        genreResultsContainer.appendChild(topGenreBadge);
+                        
+                        // Display other top genres
+                        const maxOtherGenres = Math.min(4, data.results.length - 1);
+                        for (let i = 1; i <= maxOtherGenres; i++) {
+                            const result = data.results[i];
+                            const genreBadge = document.createElement('div');
+                            genreBadge.className = 'genre-badge';
+                            const percentage = Math.round(result.probability * 100);
+                            genreBadge.innerHTML = `${capitalizeFirstLetter(result.genre)} <span>${percentage}%</span>`;
+                            genreResultsContainer.appendChild(genreBadge);
+                        }
+                    }
+                    
+                } catch (error) {
+                    console.error('Error fetching prediction:', error);
+                    if (genreResultsContainer) {
+                        genreResultsContainer.innerHTML = '<div class="error">Failed to load prediction results</div>';
+                    }
+                }
+            }
+            
+            // Get prediction results when page loads
+            getPredictionResults();
+            
+            // Function to update visualization based on active buttons
+            function updateVisualization() {
+                // Get active view type and segment type
+                const viewType = document.querySelector('.control-group:first-child .active').id.replace('Btn', '');
+                const segmentType = document.querySelector('.control-group:last-child .active').id.replace('Btn', '');
+                
+                // Placeholder for visualization update
+                visualizationContainer.innerHTML = `
+                    <div class="visualization-placeholder">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M9 18V5l12-2v13"></path>
+                            <circle cx="6" cy="18" r="3"></circle>
+                            <circle cx="18" cy="16" r="3"></circle>
+                        </svg>
+                        <p>Showing ${viewType} visualization for ${segmentType}</p>
+                        <p>In a production environment, this would generate a real-time visualization</p>
+                    </div>
+                `;
+                
+                // In a real implementation, you would make an API call to generate the visualization
+                // or use Web Audio API to analyze the audio and generate visualizations client-side
+            }
+            
+            // Helper function
+            function capitalizeFirstLetter(string) {
+                return string.charAt(0).toUpperCase() + string.slice(1);
+            }
+        });
+    </script>
+</body>
+</html> 

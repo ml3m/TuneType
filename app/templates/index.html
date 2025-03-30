@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ title }}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Music Genre Classifier</h1>
+            <p class="subtitle">Upload an audio file to identify its genre using AI</p>
+            <div class="genre-tags">
+                {% for genre in genres %}
+                <span class="genre-tag">{{ genre }}</span>
+                {% endfor %}
+            </div>
+        </header>
+        
+        <main>
+            <div class="upload-container" id="upload-container">
+                <div class="upload-area" id="upload-area">
+                    <div class="upload-icon">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                            <polyline points="17 8 12 3 7 8"></polyline>
+                            <line x1="12" y1="3" x2="12" y2="15"></line>
+                        </svg>
+                    </div>
+                    <p class="drag-text">Drag & Drop your audio file here</p>
+                    <p class="or-text">or</p>
+                    <label for="file-upload" class="upload-button">Choose File</label>
+                    <input type="file" id="file-upload" accept=".mp3,.wav,.ogg" style="display: none;">
+                    <p class="file-hint">Supported formats: MP3, WAV, OGG | Maximum file size: 50MB</p>
+                </div>
+                
+                <div class="selected-file" id="selected-file" style="display: none;">
+                    <div class="file-info">
+                        <div class="file-icon">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                                <polyline points="14 2 14 8 20 8"></polyline>
+                                <line x1="12" y1="18" x2="12" y2="12"></line>
+                                <line x1="9" y1="15" x2="15" y2="15"></line>
+                            </svg>
+                        </div>
+                        <div class="file-details">
+                            <p id="file-name">filename.mp3</p>
+                            <p id="file-size">0 MB</p>
+                        </div>
+                    </div>
+                    <button class="remove-file" id="remove-file">Remove</button>
+                </div>
+                
+                <button class="submit-button" id="submit-button" disabled>Analyze Song</button>
+            </div>
+            
+            <div class="results-container" id="results-container" style="display: none;">
+                <div class="result-header">
+                    <h2>Analysis Results</h2>
+                    <div class="results-actions">
+                        <button class="action-button" id="visualize-button">Visualize</button>
+                        <button class="back-button" id="back-button">Analyze Another Song</button>
+                    </div>
+                </div>
+                
+                <div class="genre-result">
+                    <div class="main-genre">
+                        <h3>Top Genre</h3>
+                        <p id="top-genre">Genre</p>
+                        <div class="confidence-meter">
+                            <span id="top-confidence">0%</span>
+                        </div>
+                    </div>
+                    
+                    <div class="genre-confidence">
+                        <h3>All Genres</h3>
+                        <div class="genre-bars" id="genre-bars">
+                            <!-- Confidence bars will be populated by JavaScript -->
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="result-info">
+                    <p>Note: Predictions are based on audio features extracted from your music. 
+                       Real songs often contain elements from multiple genres, which is reflected in the confidence levels.</p>
+                </div>
+            </div>
+            
+            <div class="loading-overlay" id="loading-overlay" style="display: none;">
+                <div class="loader"></div>
+                <p>Analyzing your music...</p>
+                <p class="loading-subtext">Extracting audio features and predicting genre</p>
+            </div>
+        </main>
+        
+        <footer>
+            <p>AI Music Genre Classification | Supported Genres: 
+                {% for genre in genres %}
+                {{ genre }}{% if not loop.last %}, {% endif %}
+                {% endfor %}
+            </p>
+            <p class="footer-links">
+                <a href="/about">About</a>
+            </p>
+        </footer>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+</body>
+</html> 
