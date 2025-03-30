@@ -1,5 +1,3 @@
-# TuneType
-
 <div align="center">
   <img src="logo.png" alt="TuneType Logo" width="200"/>
   <h3>Advanced Music Genre Classification System</h3>
