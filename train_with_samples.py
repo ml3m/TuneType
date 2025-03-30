@@ -1,39 +1,48 @@
+#!/usr/bin/env python3
 import os
 import json
 import numpy as np
-from tqdm import tqdm
+import random
 import logging
 import argparse
 import matplotlib.pyplot as plt
-from sklearn.model_selection import train_test_split, cross_val_score, StratifiedKFold
-from sklearn.metrics import classification_report, confusion_matrix, balanced_accuracy_score, f1_score
+from sklearn.model_selection import train_test_split, learning_curve
+from sklearn.metrics import confusion_matrix, classification_report, f1_score, balanced_accuracy_score
 import seaborn as sns
-from app.utils.feature_extractor import extract_features
+import pandas as pd
+from tqdm import tqdm
 from app.utils.model import GenreClassifier
-import librosa
-import soundfile as sf
-import random
+from app.utils.feature_extractor import extract_features
 
+# Configure logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
 
-def load_or_extract_features(sample_dir, force_extract=False, use_augmentation=True):
-    """Load features from cache or extract them from audio files with optional augmentation"""
-    features_cache_file = os.path.join(sample_dir, 'features_cache.json')
+def extract_and_cache_features(sample_dir, cache_file='features_cache.json', force_recompute=False):
+    """Extract features from audio samples and cache them for faster reuse"""
+    cache_path = os.path.join(sample_dir, cache_file)
     
-    if os.path.exists(features_cache_file) and not force_extract:
-        logger.info(f"Loading features from cache: {features_cache_file}")
-        with open(features_cache_file, 'r') as f:
-            cache = json.load(f)
+    # Check if cache exists and we're not forced to recompute
+    if os.path.exists(cache_path) and not force_recompute:
+        logger.info(f"Loading features from cache: {cache_path}")
+        try:
+            with open(cache_path, 'r') as f:
+                cache = json.load(f)
+            
+            # Prepare arrays for X and y
             X = np.array(cache['features'])
             y = np.array(cache['labels'])
             genres = cache['genres']
-        return X, y, genres
-    
-    logger.info("Extracting features from audio files...")
+            
+            return X, y, genres
+        except Exception as e:
+            logger.error(f"Error loading cache: {str(e)}")
+            logger.info("Extracting features from scratch")
+    else:
+        logger.info(f"{'Force recomputing' if force_recompute else 'No cache found'}, extracting features from audio files")
     
     # Get all genre directories
     genre_dirs = [d for d in os.listdir(sample_dir) 
@@ -44,373 +53,269 @@ def load_or_extract_features(sample_dir, force_extract=False, use_augmentation=T
         logger.error(f"No genre directories found in {sample_dir}")
         return None, None, None
     
-    logger.info(f"Found genres: {genre_dirs}")
+    # Map genres to integer labels
+    genres = sorted(genre_dirs)  # Sort to ensure consistent ordering
+    genre_to_idx = {genre: idx for idx, genre in enumerate(genres)}
     
     # Extract features from each audio file
-    X = []
-    y = []
-    file_paths = []  # Store file paths for debugging/analysis
+    features = []
+    labels = []
+    file_paths = []
     
-    for genre_idx, genre in enumerate(genre_dirs):
+    for genre in genres:
         genre_dir = os.path.join(sample_dir, genre)
         audio_files = [f for f in os.listdir(genre_dir) 
-                      if f.endswith(('.mp3', '.wav', '.ogg'))
+                      if f.endswith(('.mp3', '.wav', '.ogg', '.flac'))
                       and not f.startswith('.')]
         
         if not audio_files:
-            logger.warning(f"No audio files found in {genre_dir}")
+            logger.warning(f"No audio files found in {genre_dir}, skipping genre")
             continue
         
-        logger.info(f"Processing {len(audio_files)} files for genre '{genre}'")
+        logger.info(f"Processing {len(audio_files)} audio files for genre '{genre}'")
         
-        for audio_file in tqdm(audio_files, desc=f"Extracting features for {genre}"):
+        for audio_file in tqdm(audio_files, desc=f"Extracting {genre}"):
             file_path = os.path.join(genre_dir, audio_file)
             
             try:
-                # Extract features from multiple segments of the audio for better coverage
-                num_segments = 5  # Increased from 3
-                segment_duration = 30  # seconds
+                # Extract features with data augmentation options
+                # Standard extraction
+                feature_vector = extract_features(file_path)
+                if feature_vector is not None:
+                    features.append(feature_vector)
+                    labels.append(genre_to_idx[genre])
+                    file_paths.append(file_path)
                 
-                # Check file size to determine approach
-                if os.path.getsize(file_path) < 1000000:  # less than 1MB
-                    # For small files, just extract from beginning
-                    features = extract_features(file_path)
-                    if features is not None:
-                        X.append(features)
-                        y.append(genre_idx)
-                        file_paths.append(file_path)
-                else:
-                    # For larger files, extract from multiple segments
-                    for i in range(num_segments):
-                        # Extract from different parts of the audio
-                        offset = i * segment_duration
-                        features = extract_features(file_path, offset=offset)
-                        if features is not None:
-                            X.append(features)
-                            y.append(genre_idx)
-                            file_paths.append(f"{file_path}[{offset}s]")
-                    
-                    # Apply data augmentation if enabled
-                    if use_augmentation:
-                        # Load audio for augmentation
-                        y_audio, sr = librosa.load(file_path, sr=22050, duration=60)
-                        
-                        # Only augment if we have enough audio
-                        if len(y_audio) > sr * 30:
-                            # Time stretching (slower)
-                            y_slow = librosa.effects.time_stretch(y_audio, rate=0.85)
-                            sf.write('tmp_slow.wav', y_slow, sr)
-                            features_slow = extract_features('tmp_slow.wav')
-                            if features_slow is not None:
-                                X.append(features_slow)
-                                y.append(genre_idx)
-                                file_paths.append(f"{file_path}[time_stretch_slow]")
-                            
-                            # Time stretching (faster)
-                            y_fast = librosa.effects.time_stretch(y_audio, rate=1.15)
-                            sf.write('tmp_fast.wav', y_fast, sr)
-                            features_fast = extract_features('tmp_fast.wav')
-                            if features_fast is not None:
-                                X.append(features_fast)
-                                y.append(genre_idx)
-                                file_paths.append(f"{file_path}[time_stretch_fast]")
-                            
-                            # Pitch shifting (up)
-                            y_pitch_up = librosa.effects.pitch_shift(y_audio, sr=sr, n_steps=2)
-                            sf.write('tmp_pitch_up.wav', y_pitch_up, sr)
-                            features_pitch_up = extract_features('tmp_pitch_up.wav')
-                            if features_pitch_up is not None:
-                                X.append(features_pitch_up)
-                                y.append(genre_idx)
-                                file_paths.append(f"{file_path}[pitch_up]")
-                            
-                            # Pitch shifting (down)
-                            y_pitch_down = librosa.effects.pitch_shift(y_audio, sr=sr, n_steps=-2)
-                            sf.write('tmp_pitch_down.wav', y_pitch_down, sr)
-                            features_pitch_down = extract_features('tmp_pitch_down.wav')
-                            if features_pitch_down is not None:
-                                X.append(features_pitch_down)
-                                y.append(genre_idx)
-                                file_paths.append(f"{file_path}[pitch_down]")
-                            
-                            # Add white noise
-                            noise_factor = 0.005
-                            noise = np.random.randn(len(y_audio))
-                            y_noise = y_audio + noise_factor * noise
-                            sf.write('tmp_noise.wav', y_noise, sr)
-                            features_noise = extract_features('tmp_noise.wav')
-                            if features_noise is not None:
-                                X.append(features_noise)
-                                y.append(genre_idx)
-                                file_paths.append(f"{file_path}[noise]")
-                            
-                            # Clean up temp files
-                            for temp_file in ['tmp_slow.wav', 'tmp_fast.wav', 'tmp_pitch_up.wav', 'tmp_pitch_down.wav', 'tmp_noise.wav']:
-                                if os.path.exists(temp_file):
-                                    os.remove(temp_file)
+                # Data augmentation - process small time shifts of the audio
+                # This creates 2 additional training samples per file
+                for offset in [0.5, 1.0]:
+                    feature_vector = extract_features(file_path, offset=offset)
+                    if feature_vector is not None:
+                        features.append(feature_vector)
+                        labels.append(genre_to_idx[genre])
+                        file_paths.append(file_path + f"_offset{offset}")
+                
             except Exception as e:
-                logger.error(f"Error extracting features from {file_path}: {e}")
+                logger.error(f"Error extracting features from {file_path}: {str(e)}")
     
-    if not X:
+    if not features:
         logger.error("No features were successfully extracted!")
         return None, None, None
     
     # Convert to numpy arrays
-    X = np.array(X)
-    y = np.array(y)
+    X = np.array(features)
+    y = np.array(labels)
     
-    # Cache the features
-    cache = {
-        'features': X.tolist(),
-        'labels': y.tolist(),
-        'genres': genre_dirs
-    }
-    
-    with open(features_cache_file, 'w') as f:
-        json.dump(cache, f)
-    
-    # Save file paths for debugging (not in the cache because it would be too large)
-    with open(os.path.join(sample_dir, 'feature_files.txt'), 'w') as f:
-        for path in file_paths:
-            f.write(f"{path}\n")
-    
-    logger.info(f"Extracted features from {len(X)} audio segments across {len(genre_dirs)} genres")
-    logger.info(f"Features shape: {X.shape}")
-    
-    return X, y, genre_dirs
-
-def plot_confusion_matrix(cm, classes, output_file='confusion_matrix.png'):
-    """Plot confusion matrix with improved visualization"""
-    plt.figure(figsize=(14, 12))
-    
-    # Normalize confusion matrix for better visualization
-    cm_normalized = cm.astype('float') / cm.sum(axis=1)[:, np.newaxis]
-    
-    # More detailed visualization
-    sns.set(font_scale=1.2)
-    ax = sns.heatmap(cm_normalized, annot=True, fmt='.2f', cmap="Blues", 
-                square=True, linewidths=.5, cbar_kws={"shrink": .8},
-                xticklabels=classes, yticklabels=classes)
-    
-    # Improve readability
-    plt.ylabel('True Genre', fontsize=14)
-    plt.xlabel('Predicted Genre', fontsize=14)
-    plt.title('Normalized Confusion Matrix', fontsize=16)
-    
-    # Rotate x-axis labels for better readability
-    plt.xticks(rotation=45, ha='right')
-    plt.tight_layout()
-    
-    # Save high-quality figure
-    plt.savefig(output_file, dpi=300, bbox_inches='tight')
-    logger.info(f"Confusion matrix saved to {output_file}")
-    
-    # Also create a non-normalized version
-    plt.figure(figsize=(14, 12))
-    sns.set(font_scale=1.2)
-    sns.heatmap(cm, annot=True, fmt='d', cmap="YlGnBu", 
-                square=True, linewidths=.5, cbar_kws={"shrink": .8},
-                xticklabels=classes, yticklabels=classes)
-    plt.ylabel('True Genre', fontsize=14)
-    plt.xlabel('Predicted Genre', fontsize=14)
-    plt.title('Confusion Matrix (Count)', fontsize=16)
-    plt.xticks(rotation=45, ha='right')
-    plt.tight_layout()
-    plt.savefig(output_file.replace('.png', '_counts.png'), dpi=300, bbox_inches='tight')
-    
-    return ax
-
-def plot_feature_importance(model, feature_names=None, output_file='feature_importance.png'):
-    """Plot feature importance from the model if available"""
+    # Cache the results
     try:
-        if hasattr(model, 'estimators_'):
-            # For ensemble models, try to get feature importance from a component
-            for name, estimator in model.estimators:
-                if hasattr(estimator, 'feature_importances_'):
-                    importances = estimator.feature_importances_
-                    break
-        elif hasattr(model, 'feature_importances_'):
-            # For single models
-            importances = model.feature_importances_
-        else:
-            logger.warning("Model doesn't have feature importance attribute")
-            return
+        cache = {
+            'features': X.tolist(),
+            'labels': y.tolist(),
+            'genres': genres,
+            'files': file_paths
+        }
         
-        # Sort features by importance
-        indices = np.argsort(importances)[::-1]
+        # Create directory if it doesn't exist
+        os.makedirs(os.path.dirname(cache_path), exist_ok=True)
         
-        # Get top 20 features
-        top_indices = indices[:20]
+        with open(cache_path, 'w') as f:
+            json.dump(cache, f)
         
-        # Create feature names if not provided
-        if feature_names is None:
-            feature_names = [f"Feature {i}" for i in range(len(importances))]
-        
-        # Plot feature importance
-        plt.figure(figsize=(12, 8))
-        plt.title("Top 20 Feature Importances", fontsize=16)
-        plt.bar(range(20), importances[top_indices], align="center")
-        plt.xticks(range(20), [feature_names[i] for i in top_indices], rotation=90)
-        plt.tight_layout()
-        plt.ylabel("Importance", fontsize=14)
-        plt.savefig(output_file, dpi=300, bbox_inches='tight')
-        logger.info(f"Feature importance plot saved to {output_file}")
+        logger.info(f"Cached {len(X)} feature vectors to {cache_path}")
     except Exception as e:
-        logger.error(f"Error plotting feature importance: {e}")
+        logger.error(f"Error caching features: {str(e)}")
+    
+    return X, y, genres
 
-def train_model_with_samples(sample_dir, force_extract=False, test_size=0.2, use_cross_val=True, use_augmentation=True):
-    """Train the genre classifier with audio samples"""
-    # Extract features from audio samples
-    X, y, genres = load_or_extract_features(sample_dir, force_extract, use_augmentation)
-    
-    if X is None or len(X) == 0:
-        logger.error("No features available for training")
-        return False, None
-    
-    # Count samples per genre and print
-    unique, counts = np.unique(y, return_counts=True)
-    genre_counts = dict(zip([genres[u] for u in unique], counts))
-    logger.info("Samples per genre:")
-    for genre, count in genre_counts.items():
-        logger.info(f"  {genre}: {count} samples")
-    
-    # Split into training and testing sets
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=test_size, random_state=42, stratify=y
-    )
-    
-    logger.info(f"Training with {X_train.shape[0]} samples, testing with {X_test.shape[0]} samples")
-    
-    # Initialize the model with the correct genres
-    model = GenreClassifier(genres=genres)
-    
-    # Perform cross-validation if requested
-    if use_cross_val and len(X) >= 50:
-        logger.info("Performing cross-validation...")
-        try:
-            # Use stratified k-fold cross-validation
-            cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+def plot_confusion_matrix(y_true, y_pred, genres, output_file='confusion_matrix.png'):
+    """Plot and save confusion matrix visualization"""
+    try:
+        cm = confusion_matrix(y_true, y_pred)
+        
+        plt.figure(figsize=(12, 10))
+        
+        # Create normalized confusion matrix for better visualization
+        cm_normalized = cm.astype('float') / cm.sum(axis=1)[:, np.newaxis]
+        # Handle divisions by zero
+        cm_normalized = np.nan_to_num(cm_normalized)
+        
+        sns.heatmap(cm_normalized, annot=True, fmt='.2f', cmap='Blues',
+                   xticklabels=genres, yticklabels=genres)
+        plt.xlabel('Predicted')
+        plt.ylabel('True')
+        plt.title('Confusion Matrix (Normalized)')
+        plt.tight_layout()
+        plt.savefig(output_file)
+        logger.info(f"Confusion matrix saved to {output_file}")
+    except Exception as e:
+        logger.error(f"Error plotting confusion matrix: {str(e)}")
+
+def save_classification_report(y_true, y_pred, genres, output_file='classification_report.csv'):
+    """Save classification report to CSV for easy analysis"""
+    try:
+        # Ensure we have consistent labels between predictions and actual values
+        unique_classes = np.unique(np.concatenate([y_true, y_pred]))
+        actual_genres = [genres[i] if i < len(genres) else f"Unknown-{i}" for i in unique_classes]
+        
+        report = classification_report(y_true, y_pred, labels=unique_classes, 
+                                      target_names=actual_genres, output_dict=True)
+        
+        # Convert to DataFrame for easy CSV output
+        df = pd.DataFrame(report).transpose()
+        df.to_csv(output_file)
+        logger.info(f"Classification report saved to {output_file}")
+    except Exception as e:
+        logger.error(f"Error saving classification report: {str(e)}")
+
+def plot_learning_curve(model, X, y, genres, output_file='learning_curve.png'):
+    """Plot learning curve to visualize model performance vs. training size"""
+    try:
+        # Create scoring function that balances accuracy and F1 score
+        def combined_score(estimator, X, y):
+            y_pred = estimator.predict(X)
+            acc = balanced_accuracy_score(y, y_pred)
+            f1 = f1_score(y, y_pred, average='macro')
+            return (acc + f1) / 2
+        
+        # Define training sizes
+        train_sizes = np.linspace(0.1, 1.0, 10)
+        
+        # Calculate learning curve
+        train_sizes, train_scores, test_scores = learning_curve(
+            model.model, X, y, train_sizes=train_sizes, cv=5, 
+            scoring=combined_score, n_jobs=-1, verbose=1
+        )
+        
+        # Calculate mean and standard deviation for training and test scores
+        train_mean = np.mean(train_scores, axis=1)
+        train_std = np.std(train_scores, axis=1)
+        test_mean = np.mean(test_scores, axis=1)
+        test_std = np.std(test_scores, axis=1)
+        
+        # Plot learning curve
+        plt.figure(figsize=(10, 6))
+        plt.title('Learning Curve (Combined Accuracy & F1 Score)')
+        plt.xlabel('Training examples')
+        plt.ylabel('Score')
+        plt.grid()
+        
+        plt.fill_between(train_sizes, train_mean - train_std, train_mean + train_std, 
+                        alpha=0.1, color='r')
+        plt.fill_between(train_sizes, test_mean - test_std, test_mean + test_std, 
+                        alpha=0.1, color='g')
+        plt.plot(train_sizes, train_mean, 'o-', color='r', label='Training score')
+        plt.plot(train_sizes, test_mean, 'o-', color='g', label='Cross-validation score')
+        
+        plt.legend(loc='best')
+        plt.savefig(output_file)
+        
+        logger.info(f"Learning curve saved to {output_file}")
+    except Exception as e:
+        logger.error(f"Error plotting learning curve: {str(e)}")
+
+def evaluate_genre_specific_accuracy(model, X, y, genres):
+    """Calculate and report genre-specific accuracy metrics"""
+    try:
+        # Get model predictions
+        probabilities = model.predict(X)
+        y_pred = np.argmax(probabilities, axis=1)
+        
+        # For each genre, calculate accuracy when that's the true genre
+        genre_accuracies = {}
+        
+        for i, genre in enumerate(genres):
+            # Find samples where the true genre is this genre
+            mask = (y == i)
             
-            # Get model instance for CV
-            cv_model = model._build_model()
-            
-            # Compute cross-validation scores using balanced accuracy
-            cv_scores = cross_val_score(
-                cv_model, X, y, cv=cv, scoring='balanced_accuracy'
-            )
-            
-            logger.info(f"Cross-validation scores: {cv_scores}")
-            logger.info(f"Mean CV score: {cv_scores.mean():.4f} (±{cv_scores.std():.4f})")
-            
-            # Plot learning curve if dataset is large enough
-            if len(X) >= 100:
-                logger.info("Generating learning curve...")
-                from sklearn.model_selection import learning_curve
-                
-                # Calculate learning curve
-                train_sizes, train_scores, test_scores = learning_curve(
-                    cv_model, X, y, cv=cv, scoring='balanced_accuracy',
-                    train_sizes=np.linspace(0.1, 1.0, 10), n_jobs=-1
-                )
-                
-                # Calculate mean and std of training and test scores
-                train_mean = np.mean(train_scores, axis=1)
-                train_std = np.std(train_scores, axis=1)
-                test_mean = np.mean(test_scores, axis=1)
-                test_std = np.std(test_scores, axis=1)
-                
-                # Plot learning curve
-                plt.figure(figsize=(10, 6))
-                plt.title("Learning Curve", fontsize=16)
-                plt.xlabel("Training examples", fontsize=14)
-                plt.ylabel("Balanced accuracy score", fontsize=14)
-                plt.grid()
-                
-                plt.fill_between(train_sizes, train_mean - train_std,
-                                train_mean + train_std, alpha=0.1, color="r")
-                plt.fill_between(train_sizes, test_mean - test_std,
-                                test_mean + test_std, alpha=0.1, color="g")
-                plt.plot(train_sizes, train_mean, 'o-', color="r",
-                        label="Training score")
-                plt.plot(train_sizes, test_mean, 'o-', color="g",
-                        label="Cross-validation score")
-                plt.legend(loc="best")
-                plt.savefig("learning_curve.png", dpi=300, bbox_inches='tight')
-                logger.info("Learning curve saved to learning_curve.png")
-                
-        except Exception as e:
-            logger.warning(f"Cross-validation failed: {e}")
-    
-    # Train the model on training data
-    history = model.train(X_train, y_train, cross_validation=use_cross_val)
-    
-    # Evaluate on test set
-    y_pred_proba = model.predict(X_test)
-    y_pred = np.argmax(y_pred_proba, axis=1)
-    
-    # Calculate various metrics
-    accuracy = np.mean(y_pred == y_test)
-    balanced_acc = balanced_accuracy_score(y_test, y_pred)
-    f1 = f1_score(y_test, y_pred, average='weighted')
-    
-    logger.info(f"Test metrics:")
-    logger.info(f"  Accuracy: {accuracy:.4f}")
-    logger.info(f"  Balanced Accuracy: {balanced_acc:.4f}")
-    logger.info(f"  F1 Score (weighted): {f1:.4f}")
-    
-    # Generate detailed classification report
-    report = classification_report(y_test, y_pred, target_names=genres, output_dict=True)
-    logger.info("Classification Report:")
-    for genre in genres:
-        if genre in report:
-            precision = report[genre]['precision']
-            recall = report[genre]['recall']
-            f1 = report[genre]['f1-score']
-            support = report[genre]['support']
-            logger.info(f"  {genre}: Precision={precision:.4f}, Recall={recall:.4f}, F1={f1:.4f}, Support={support}")
-    
-    # Save classification report as CSV
-    import pandas as pd
-    report_df = pd.DataFrame(report).transpose()
-    report_df.to_csv('classification_report.csv')
-    logger.info("Classification report saved to classification_report.csv")
-    
-    # Generate and plot confusion matrix
-    cm = confusion_matrix(y_test, y_pred)
-    plot_confusion_matrix(cm, genres)
-    
-    # Try to plot feature importance
-    plot_feature_importance(model.model)
-    
-    # Save the trained model
-    model.save_model()
-    
-    # Return success and model
-    return True, model
+            if np.sum(mask) > 0:
+                # Calculate accuracy for this genre
+                genre_acc = np.mean(y_pred[mask] == y[mask])
+                genre_accuracies[genre] = genre_acc
+            else:
+                genre_accuracies[genre] = 0.0
+        
+        logger.info("Genre-specific accuracies:")
+        for genre, acc in genre_accuracies.items():
+            logger.info(f"{genre}: {acc:.4f}")
+        
+        return genre_accuracies
+    except Exception as e:
+        logger.error(f"Error calculating genre-specific accuracy: {str(e)}")
+        return {}
 
 def main():
     parser = argparse.ArgumentParser(description='Train genre classifier with audio samples')
-    parser.add_argument('--sample-dir', default='samples', help='Directory containing audio samples organized by genre')
-    parser.add_argument('--force-extract', action='store_true', help='Force re-extraction of features even if cache exists')
-    parser.add_argument('--test-size', type=float, default=0.2, help='Proportion of data to use for testing')
-    parser.add_argument('--skip-cross-val', action='store_true', help='Skip cross-validation')
-    parser.add_argument('--skip-augmentation', action='store_true', help='Skip data augmentation')
+    parser.add_argument('--sample-dir', type=str, default='samples', 
+                       help='Directory containing genre samples')
+    parser.add_argument('--test-size', type=float, default=0.2,
+                       help='Percentage of data to use for testing (default: 0.2)')
+    parser.add_argument('--force-recompute', action='store_true',
+                       help='Force recomputation of features instead of using cache')
+    parser.add_argument('--cross-validation', action='store_true',
+                       help='Use cross-validation during training')
+    parser.add_argument('--no-augmentation', action='store_true',
+                       help='Disable data augmentation')
     
     args = parser.parse_args()
     
-    logger.info(f"Training with samples from {args.sample_dir}")
-    success, _ = train_model_with_samples(
+    # Extract features from samples
+    X, y, genres = extract_and_cache_features(
         args.sample_dir, 
-        force_extract=args.force_extract,
-        test_size=args.test_size,
-        use_cross_val=not args.skip_cross_val,
-        use_augmentation=not args.skip_augmentation
+        force_recompute=args.force_recompute
     )
     
-    if success:
-        logger.info("Training completed successfully!")
-    else:
-        logger.error("Training failed!")
+    if X is None or y is None:
+        logger.error("Failed to extract features or no features found!")
+        return
+    
+    # Split data into training and testing sets with stratification
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=args.test_size, random_state=42, stratify=y
+    )
+    
+    logger.info(f"Training set: {len(X_train)} samples")
+    logger.info(f"Testing set: {len(X_test)} samples")
+    
+    # Initialize model with the genres from our dataset
+    model = GenreClassifier(genres=genres)
+    
+    # Train the model
+    logger.info("Training the model...")
+    
+    # Train with cross-validation if requested
+    validation_score = model.train(
+        X_train, y_train, 
+        cross_validation=args.cross_validation
+    )
+    
+    # Evaluate the model
+    logger.info("Evaluating the model...")
+    
+    # Get predictions on test set
+    test_probabilities = model.predict(X_test)
+    test_predictions = np.argmax(test_probabilities, axis=1)
+    
+    # Calculate balanced accuracy to handle class imbalance
+    balanced_acc = balanced_accuracy_score(y_test, test_predictions)
+    logger.info(f"Balanced accuracy: {balanced_acc:.4f}")
+    
+    # Calculate macro F1 score for balanced evaluation
+    f1 = f1_score(y_test, test_predictions, average='macro')
+    logger.info(f"Macro F1 score: {f1:.4f}")
+    
+    # Save detailed classification report
+    save_classification_report(y_test, test_predictions, genres)
+    
+    # Plot confusion matrix
+    plot_confusion_matrix(y_test, test_predictions, genres)
+    
+    # Plot learning curve
+    plot_learning_curve(model, X, y, genres)
+    
+    # Calculate genre-specific accuracies
+    evaluate_genre_specific_accuracy(model, X_train, y_train, genres)
+    
+    logger.info("Model training and evaluation complete")
 
 if __name__ == "__main__":
     main() 

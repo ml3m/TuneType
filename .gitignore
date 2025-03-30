@@ -131,3 +131,7 @@ $RECYCLE.BIN/
 logs/
 *.cache
 .cache/ 
+
+
+venv_py312/
+*whl
